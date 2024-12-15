@@ -84,7 +84,7 @@ async function createWidget(beachData) {
   const { today, tomorrow, updated } = beachData;
 
   const headingColor = Color.blue();
-  const textColor = Color.black();
+  const textColor = Color.dynamic(Color.black(), Color.white());
   const lightColor = Color.gray();
 
   const CONDITION_COLORS = {
