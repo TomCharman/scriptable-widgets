@@ -3,7 +3,8 @@
 // icon-color: yellow; icon-glyph: umbrella-beach;
 
 let beachName = args.widgetParameter || 'Hampton';
-let beachReportUrl = 'https://www.epa.vic.gov.au/for-community/summer-water-quality/water-quality-across-victoria';
+let beachReportUrl =
+  'https://www.epa.vic.gov.au/for-community/summer-water-quality/water-quality-across-victoria';
 
 let beachData = await getBeachStuff(beachName);
 let widget = await createWidget(beachData);
@@ -23,16 +24,20 @@ async function getBeachStuff(beachString) {
 
   await wv.loadURL(beachReportUrl);
 
+  let result;
+
   try {
-    const result = await wv.evaluateJavaScript(
+    result = await wv.evaluateJavaScript(
       `try {
         const today = {};
         const tomorrow = {};
         const row = Array.from(document.querySelectorAll('table.js-responsive-table tr')).find(node => node.textContent.includes('${beachString}'));
-        today.quality = row.querySelector('td:nth-child(2) .indicator').innerText;
-        today.description = row.querySelector('td:nth-child(2) p').innerText;
-        tomorrow.quality = row.querySelector('td:nth-child(3) .indicator')?.innerText ?? 'not available';
-        tomorrow.description = row.querySelector('td:nth-child(3) p')?.innerText ?? 'not available';
+        
+        today.quality = row?.querySelector('td:nth-child(2) .indicator')?.innerText ?? 'unavailable';
+        today.description = row?.querySelector('td:nth-child(2) p')?.innerText ?? 'unavailable';
+        today.conditionsUrl = row?.querySelector('td:nth-child(4) a[href*="beachsafe.org.au"]')?.href;
+        tomorrow.quality = row?.querySelector('td:nth-child(3) .indicator')?.innerText ?? 'unavailable';
+        tomorrow.description = row?.querySelector('td:nth-child(3) p')?.innerText ?? 'unavailable';
       
         let updated = Array.from(document.querySelectorAll('section.cm-yb-table p')).find(node => node.textContent.includes('Updated'));
         if (updated) {
@@ -42,14 +47,36 @@ async function getBeachStuff(beachString) {
         completion({ today, tomorrow, updated });
       } catch (e) {
         logError(e);
+        completion({ today: { description } })
       }`,
       true
     );
 
     console.log(result);
+  } catch (e) {
+    console.error('Failed finding water quality', e);
+  }
+
+  try {
+    if (result?.today?.conditionsUrl) {
+      const conditionsUrlParts = result.today.conditionsUrl.split('/');
+      console.log(`conditions ${result.today.conditionsUrl}`);
+      console.log(
+        `parts: ${conditionsUrlParts[conditionsUrlParts.length - 1]}`
+      );
+      const lastUrlSlug = conditionsUrlParts[conditionsUrlParts.length - 1];
+
+      const beachApiRequest = new Request(
+        `https://beachsafe.org.au/api/v4/beach/${lastUrlSlug}`
+      );
+      const beachApiData = await beachApiRequest.loadJSON();
+      const temp = beachApiData?.beach?.weather?.water_temperatures;
+      result.today.waterTemperature = temp;
+    }
+
     return result;
   } catch (e) {
-    console.error('Failed finding beach result', e);
+    console.error('Failed finding beach temperature', e);
   }
 }
 
@@ -67,7 +94,7 @@ async function createWidget(beachData) {
     Illegal: Color.brown(),
   };
 
-  const getConditionColor = condition => {
+  const getConditionColor = (condition) => {
     return CONDITION_COLORS[condition] ?? textColor;
   };
 
@@ -95,14 +122,17 @@ async function createWidget(beachData) {
   beachNameText.textColor = headingColor;
   beachNameText.font = Font.boldRoundedSystemFont(16);
 
+  beachNameStack.addSpacer();
+
   mainStack.addSpacer(6);
 
   const currentYear = new Date().getFullYear();
-  const updatedTrimmed = updated
-    .replace('Updated', '')
-    .replace('AEST', '')
-    .replace(currentYear, '')
-    .trim();
+  const updatedTrimmed =
+    updated
+      ?.replace('Updated', '')
+      .replace('AEST', '')
+      .replace(currentYear, '')
+      .trim() ?? '';
   let updatedText = mainStack.addText(`Updated: ${updatedTrimmed}`);
   updatedText.textColor = lightColor;
   updatedText.font = Font.semiboldSystemFont(10);
@@ -110,7 +140,7 @@ async function createWidget(beachData) {
   mainStack.addSpacer();
 
   let daysStack = mainStack.addStack();
-  daysStack.layoutHorizontally();
+  daysStack.layoutVertically();
 
   let todayStack = daysStack.addStack();
   todayStack.layoutVertically();
@@ -120,10 +150,24 @@ async function createWidget(beachData) {
   todayTitleElement.font = Font.boldSystemFont(11);
   todayStack.addSpacer(4);
 
-  let todayDescriptionElement = todayStack.addText(today.quality);
+  let todayDescriptionStack = todayStack.addStack();
+  todayDescriptionStack.layoutHorizontally();
+
+  let todayDescriptionElement = todayDescriptionStack.addText(today.quality);
   todayDescriptionElement.minimumScaleFactor = 0.5;
   todayDescriptionElement.textColor = getConditionColor(today.quality);
   todayDescriptionElement.font = Font.semiboldRoundedSystemFont(textSize);
+
+  if (today.waterTemperature) {
+    todayDescriptionStack.addSpacer(4);
+    let todayWaterTemperatureElement = todayDescriptionStack.addText(
+      `${today.waterTemperature}ºC`
+    );
+    todayWaterTemperatureElement.minimumScaleFactor = 0.5;
+    todayWaterTemperatureElement.textColor = lightColor;
+    todayWaterTemperatureElement.font =
+      Font.semiboldRoundedSystemFont(textSize);
+  }
 
   daysStack.addSpacer();
 
